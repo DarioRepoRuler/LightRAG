@@ -7,7 +7,12 @@ import requests
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import numpy as np
- 
+import logging
+from lightrag import LightRAG, QueryParam
+from lightrag.llm import ollama_model_complete, ollama_embedding
+from lightrag.utils import EmbeddingFunc
+import os
+
 class TowerOfHanoi:
     def __init__(self, num_disks=3):
         self.num_disks = num_disks
@@ -21,24 +26,42 @@ class TowerOfHanoi:
         self.move_count = 0
         
     def get_state_description(self):
-        """Generate a text description of the current state for the LLM.
-            In tower of Hanoi puzzle with {self.num_disks} disks.
-            The Tower of Hanoi rules dictate that you must move one disk at a time, only the top disk, between three pegs while never placing a larger disk on a smaller one.
-            Disk numbers represent disk sizes, where a larger number = a larger disk.
-            Current state (from bottom to top):
-            Source peg (S): {self.pegs['S']}
-            Auxiliary peg (A): {self.pegs['A']}
-            Target peg (T): {self.pegs['T']}
-            What is the next move to get all disks to the target peg T?
+        """Generate a text description of the current state for the LLM."""
+        # return f"""In tower of Hanoi puzzle with {self.num_disks} disks.
+        #     The Tower of Hanoi rules dictate that you must move one disk at a time, only the top disk, between three pegs while never placing a larger disk on a smaller one.
+        #     Disk numbers represent disk sizes, where a larger number = a larger disk.
+        #     Current state (from bottom to top):
+        #     Source peg (S): {self.pegs['S']}
+        #     Auxiliary peg (A): {self.pegs['A']}
+        #     Target peg (T): {self.pegs['T']}
+        #     What is the next move to get all disks to the target peg T?
             
-            Your answer must be formatted using the tag system: MDxYZ where:
-            - M means Move
-            - D followed by the disk number (e.g., Dx for disk x)
-            - Source peg letter (S, A, or T)
-            - Target peg letter (S, A, or T)
-            For example, moving disk x from Source to Target would be MDxST.
-            If no move is needed because all disks are already on the target peg, use NM for No Move."""
-    
+        #     Your answer must be formatted using the tag system: MDxYZ where:
+        #     - M means Move
+        #     - D followed by the disk number (e.g., Dx for disk x)
+        #     - Source peg letter (S, A, or T)
+        #     - Target peg letter (S, A, or T)
+        #     For example, moving disk x from Source to Target would be MDxST.
+        # If no move is needed because all disks are already on the target peg, use NM for No Move. Answer with the tag system only."""
+        return f"""
+            In tower of Hanoi puzzle with 3 disks.\
+        The Tower of Hanoi rules dictate that you must move one disk at a time, only the top disk, between three pegs while never placing a larger disk on a smaller one. \
+        Disk numbers represent disk sizes, where a larger number = a larger disk.\
+        Current state (from bottom to top):\
+        Source peg (S): {self.pegs['S']}
+        Auxiliary peg (A): {self.pegs['A']}
+        Target peg (T): {self.pegs['T']}
+        What is the next move to get all disks to the target peg T?\
+        Your answer must be formatted using the tag system: MDxYZ where:\
+        - M means Move\
+        - D followed by the disk number (e.g., Dx for disk x)\
+        - Source peg letter (S, A, or T)\
+        - Target peg letter (S, A, or T)\
+        For example, moving disk x from Source to Target would be MDxST.\
+        If no move is needed because all disks are already on the target peg, use NM for No Move.\
+        Answer with the tag system only.\
+        """
+
     def is_valid_move(self, disk, source, target):
         """Check if a move is valid."""
         # Check if the disk exists on the source peg
@@ -100,35 +123,10 @@ class TowerOfHanoi:
         
         print(f"Executing move: Disk {disk} from {source} to {target}")
         return self.make_move(disk, source, target)
- 
-class OllamaAgent:
-    def __init__(self, model="qwen2mm"):
-        self.model = model
-        self.api_url = "http://localhost:11434/api/generate"
-        
-    def get_next_move(self, state_description):
-        """Query the Ollama LLM for the next move."""
-        try:
-            payload = {
-                "model": self.model,
-                "prompt": state_description,
-                "stream": False
-            }
-            print(f"Querying Ollama API with payload: {payload}")
-            print(f"Prompt: {state_description}")
-            response = requests.post(self.api_url, json=payload)
-            if response.status_code == 200:
-                result = response.json()
-                return result.get("response", "")
-            else:
-                print(f"Error querying Ollama API: {response.status_code}")
-                return None
-        except Exception as e:
-            print(f"Exception when calling Ollama API: {e}")
-            return None
+
  
 class TowerOfHanoiVisualizer:
-    def __init__(self, hanoi, use_matplotlib=True):
+    def __init__(self, hanoi, use_matplotlib=True, agent_type = 'LightRAG'):
         self.hanoi = hanoi
         self.use_matplotlib = use_matplotlib
         
@@ -136,6 +134,12 @@ class TowerOfHanoiVisualizer:
             self.setup_matplotlib()
         else:
             self.setup_pygame()
+        if agent_type == 'Ollama':
+            self.agent = OllamaAgent()
+        elif agent_type == 'LightRAG':
+            self.agent = LightRAGAgent()
+        else:
+            raise ValueError("Invalid agent type. Choose 'Ollama' or 'LightRAG'.")
     
     def setup_matplotlib(self):
         """Setup matplotlib visualization."""
@@ -232,7 +236,8 @@ class TowerOfHanoiVisualizer:
         """Run the pygame visualization loop."""
         running = True
         solved = False
-        agent = OllamaAgent()
+        # agent = OllamaAgent()
+        agent = self.agent
         
         while running:
             for event in pygame.event.get():
@@ -313,7 +318,7 @@ class TowerOfHanoiVisualizer:
     
     def run_matplotlib_visualization(self):
         """Run the matplotlib visualization."""
-        agent = OllamaAgent()
+        agent = self.agent
         
         def animate(i):
             if not self.hanoi.is_solved():
@@ -362,7 +367,95 @@ class MockOllamaAgent:
             self.move_index += 1
             return f"I'll move disk {move[2]} from {move[3]} to {move[4]}. {{MD{move[2]}{move[3]}{move[4]}}}"
         return "NM"  # No Move
- 
+    
+class OllamaAgent:
+    def __init__(self, model="qwen2mm"):
+        self.model = model
+        self.api_url = "http://localhost:11434/api/generate"
+        
+    def get_next_move(self, state_description):
+        """Query the Ollama LLM for the next move."""
+        try:
+            payload = {
+                "model": self.model,
+                "prompt": state_description,
+                "stream": False
+            }
+            print(f"Querying Ollama API with payload: {payload}")
+            print(f"Prompt: {state_description}")
+            response = requests.post(self.api_url, json=payload)
+            if response.status_code == 200:
+                result = response.json()
+                print(f"Response from Ollama API: {result}")
+                return result.get("response", "")
+            else:
+                print(f"Error querying Ollama API: {response.status_code}")
+                return None
+        except Exception as e:
+            print(f"Exception when calling Ollama API: {e}")
+            return None
+
+class LightRAGAgent:
+    def __init__(self, model="qwen2mm", context="./tower_of_hanoi_dataset.txt"):
+        self.model = model
+        self.api_url = "http://localhost:11434"
+        WORKING_DIR = "./tower_of_hanoi"
+        if not os.path.exists(WORKING_DIR):
+            os.mkdir(WORKING_DIR)
+        self.rag = LightRAG(
+                working_dir=WORKING_DIR,
+                llm_model_func=ollama_model_complete,
+                llm_model_name="qwen2mm",
+                llm_model_max_async=4,
+                llm_model_max_token_size=32768,
+                llm_model_kwargs={"host": self.api_url, "options": {"num_ctx": 32768}},
+                embedding_func=EmbeddingFunc(
+                    embedding_dim=768,
+                    max_token_size=8192,
+                    func=lambda texts: ollama_embedding(
+                        texts, embed_model="nomic-embed-text", host=self.api_url
+                    ),
+                ),
+        )
+        with open("./tower_of_hanoi_dataset.txt", "r", encoding="utf-8") as f:
+            self.rag.insert(f.read())
+
+    def get_next_move(self, state_description, mode="hybrid"):
+        """Query the Ollama LLM for the next move."""
+        try:
+            response = self.rag.query(state_description,param=QueryParam(mode=mode))
+            move_tag = self.extract_move_tag(response)
+        except Exception as e:
+            print(f"Exception when calling LightRAG: {e}")
+            return None
+        return move_tag
+    
+    def extract_move_tag(self,response):
+        print("Full Response:")
+        print(response)
+
+        print("\nExtracted Move:")
+        move_code = None
+        # Try first to find a move code that appears after "optimal" or "recommended"
+        final_move_pattern = r"(?:optimal|recommended).*?[{]?([MN][DM][0-9]+[AST]{2}|NM)[}]?"
+        match = re.search(final_move_pattern, response, re.IGNORECASE | re.DOTALL)
+
+        # If not found with the above pattern, try looking for markdown headings
+        if not match:
+            heading_move_pattern = r"#{2,4}\s*[{]?([MN][DM][0-9]+[AST]{2}|NM)[}]?"
+            match = re.search(heading_move_pattern, response)
+
+        # If still not found, get the last occurrence of any move code
+        if not match:
+            all_matches = re.findall(r"[{]?([MN][DM][0-9]+[AST]{2}|NM)[}]?", response)
+            if all_matches:
+                move_code = all_matches[-1]
+                print(move_code)
+            else:
+                print("No valid move code found in the response")
+
+        return move_code
+    
 def main():
     # Create Tower of Hanoi game
     hanoi = TowerOfHanoi(num_disks=3)
